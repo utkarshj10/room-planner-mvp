@@ -1,9 +1,9 @@
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from app.database import get_database
-from app.models.layout import LayoutCreate, LayoutResponse
 
 
 router = APIRouter(
@@ -12,14 +12,24 @@ router = APIRouter(
 )
 
 
+class LayoutCreate(BaseModel):
+    room_id: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=100)
+    furniture: list
+
+
+class LayoutResponse(LayoutCreate):
+    id: str
+
+
 @router.post("", response_model=LayoutResponse)
-def create_layout(layout: LayoutCreate):
+def save_layout(layout: LayoutCreate):
     database = get_database()
 
     if database is None:
         raise HTTPException(
             status_code=503,
-            detail="Database is not connected",
+            detail="Database not connected",
         )
 
     layout_id = str(uuid4())
@@ -38,13 +48,13 @@ def create_layout(layout: LayoutCreate):
     "/{room_id}",
     response_model=list[LayoutResponse],
 )
-def get_room_layouts(room_id: str):
+def get_saved_layouts(room_id: str):
     database = get_database()
 
     if database is None:
         raise HTTPException(
             status_code=503,
-            detail="Database is not connected",
+            detail="Database not connected",
         )
 
     layouts = list(
@@ -64,7 +74,7 @@ def delete_layout(layout_id: str):
     if database is None:
         raise HTTPException(
             status_code=503,
-            detail="Database is not connected",
+            detail="Database not connected",
         )
 
     result = database.layouts.delete_one(
