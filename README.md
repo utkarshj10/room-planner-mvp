@@ -1,121 +1,237 @@
-# Room Planner MVP
+# AI Room Planner
 
-A full-stack room and interior layout planner.
+An AI-powered web application that helps users design and arrange room interiors based on real-world room dimensions, doors, windows, and furniture.
 
-## Current stack
+The application allows users to create rooms, place and arrange furniture interactively, generate practical layout alternatives, evaluate layouts based on spatial constraints, save layouts, and receive AI-powered interior design recommendations.
 
-- Frontend: Next.js + React + TypeScript + Tailwind CSS
-- Backend: FastAPI + Python
-- Database: MongoDB Atlas (connection prepared, not required for the first run)
-- AI: Not used yet
-- Layout engine: will be added in the next development stage
+The goal is to combine **geometric layout reasoning with generative AI** to help users create room arrangements that are both practical and visually appealing.
 
-## Project structure
+---
+
+## Project Summary
+
+Designing a room layout manually can be difficult when multiple constraints such as room dimensions, furniture sizes, doors, windows, and walking space need to be considered simultaneously.
+
+AI Room Planner addresses this by providing an interactive room planning environment where users can:
+
+- Define their room dimensions manually
+- Add doors and windows
+- Add furniture with dimensions
+- Move and rotate furniture interactively
+- Generate multiple possible layouts
+- Evaluate layouts based on spatial constraints
+- Save and load layouts
+- Manage multiple rooms
+- Ask an AI interior advisor for recommendations
+
+The application uses a **geometry-based layout engine** for spatial calculations and an **LLM-based AI advisor** for natural-language recommendations.
+
+---
+
+## Tech Stack
+
+### Frontend
+
+- **Next.js**
+- **React**
+- **TypeScript**
+- **Tailwind CSS**
+- SVG-based interactive room editor
+
+### Backend
+
+- **FastAPI**
+- **Python**
+- **Pydantic**
+
+### Database
+
+- **MongoDB Atlas**
+- **PyMongo**
+
+Used for storing:
+
+- Rooms
+- Saved layouts
+- Furniture arrangements
+
+### AI
+
+- **Groq API**
+- **GPT-OSS 20B**
+
+The AI receives structured room and layout information from the backend and provides practical interior-design recommendations.
+
+### Development
+
+- Git
+- GitHub
+- VS Code
+
+---
+
+## Features
+
+### 1. Room Creation
+
+Users can create a room by manually entering:
+
+- Room name
+- Width
+- Length
+- Unit of measurement
+
+---
+
+### 2. Doors & Windows
+
+Users can specify:
+
+- Wall position
+- Opening position
+- Opening width
+
+Doors and windows are represented directly on the room floor plan.
+
+---
+
+### 3. Interactive Furniture Placement
+
+Users can add furniture with:
+
+- Furniture type
+- Width
+- Length
+- Quantity
+
+Furniture can then be:
+
+- Dragged around the room
+- Selected
+- Rotated by 90°
+- Positioned within the room boundaries
+
+---
+
+### 4. Spatial Layout Validation
+
+The application evaluates the current arrangement using a geometry engine.
+
+It checks factors such as:
+
+- Furniture staying inside the room
+- Furniture overlap
+- Door/window conflicts
+- Available space
+- Layout usability
+- Walking space
+
+The result is represented using a layout score and detected issues.
+
+---
+
+### 5. Automatic Layout Generation
+
+The application can generate multiple possible furniture arrangements.
+
+Generated layouts are evaluated using the spatial scoring system and presented as different layout options.
+
+Users can select the arrangement they prefer.
+
+---
+
+### 6. AI Interior Advisor
+
+The application includes an actual LLM-powered interior design advisor.
+
+Instead of sending an image and asking an AI to guess the room geometry, the application first calculates structured spatial information.
+
+The AI receives information such as:
+
+- Room dimensions
+- Furniture dimensions
+- Furniture positions
+- Furniture rotations
+- Doors
+- Windows
+- Layout score
+- Detected spatial issues
+
+The AI then provides:
+
+- What works well
+- Potential problems
+- Practical recommendations
+
+This allows the AI to focus on **design reasoning and recommendations**, while the geometry engine handles spatial calculations.
+
+---
+
+### 7. Multiple Rooms
+
+Users can create and manage multiple rooms.
+
+Each room maintains its own:
+
+- Dimensions
+- Doors
+- Windows
+- Furniture arrangement
+- Saved layouts
+
+Users can switch between their rooms without losing their previous work.
+
+---
+
+### 8. Saved Layouts
+
+Users can save furniture arrangements and later:
+
+- View saved layouts
+- Load a layout
+- Delete a layout
+
+Saved layouts are stored in MongoDB Atlas.
+
+---
+
+### 9. Persistence
+
+Room and layout data is persisted so that users can return to their previous work.
+
+MongoDB Atlas acts as the backend database for persistent room and layout data.
+
+---
+
+## User Flow
 
 ```text
-room-planner-mvp/
-├── frontend/
-│   ├── app/
-│   │   ├── globals.css
-│   │   ├── layout.tsx
-│   │   └── page.tsx
-│   ├── lib/
-│   │   └── api.ts
-│   ├── .env.local.example
-│   ├── next-env.d.ts
-│   ├── next.config.ts
-│   ├── package.json
-│   ├── postcss.config.mjs
-│   ├── tailwind.config.ts
-│   └── tsconfig.json
-│
-├── backend/
-│   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   ├── models/
-│   │   │   ├── __init__.py
-│   │   │   └── room.py
-│   │   └── routes/
-│   │       ├── __init__.py
-│   │       └── rooms.py
-│   ├── .env.example
-│   └── requirements.txt
-│
-└── .gitignore
-```
-
-## 1. Backend setup
-
-Open a terminal in `backend/`.
-
-### Windows
-
-```powershell
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
-
-Backend:
-`http://127.0.0.1:8000`
-
-API documentation:
-`http://127.0.0.1:8000/docs`
-
-## 2. Frontend setup
-
-Open a second terminal in `frontend/`.
-
-```powershell
-npm install
-npm run dev
-```
-
-Frontend:
-`http://localhost:3000`
-
-The frontend already calls the FastAPI health endpoint.
-
-## 3. MongoDB
-
-MongoDB is prepared through environment variables but is not required for the current milestone.
-
-Copy:
-
-```text
-backend/.env.example -> backend/.env
-```
-
-and add your MongoDB Atlas connection string when we reach the persistence stage.
-
-For GitHub, never commit `.env`.
-
-## 4. Git
-
-From the project root:
-
-```powershell
-git init
-git add .
-git commit -m "Initial full-stack MVP setup"
-git branch -M main
-git remote add origin YOUR_GITHUB_REPOSITORY_URL
-git push -u origin main
-```
-
-## Development plan
-
-1. Project setup and frontend/backend connection
-2. Room dimensions
-3. Doors and windows
-4. Furniture
-5. Interactive 2D editor
-6. Geometry and collision detection
-7. Layout generation
-8. Layout scoring
-9. MongoDB persistence
-10. AI features
+Start Application
+        ↓
+Create Room
+        ↓
+Enter Room Dimensions
+        ↓
+Add Doors & Windows
+        ↓
+Add Furniture
+        ↓
+Open Room Editor
+        ↓
+Arrange / Rotate Furniture
+        ↓
+Validate Current Layout
+        ↓
+Generate Layout Alternatives
+        ↓
+Select Preferred Layout
+        ↓
+Ask AI Interior Advisor
+        ↓
+Receive AI Recommendations
+        ↓
+Save Layout
+        ↓
+Load / Delete Saved Layouts
+        ↓
+Switch Between Rooms
