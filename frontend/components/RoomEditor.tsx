@@ -2,7 +2,18 @@
 
 import { useMemo, useState } from "react";
 
-type Wall = "north" | "east" | "south" | "west";
+import {
+  calculateLayout,
+  generateLayout,
+  getFurnitureRectangle,
+  type Opening,
+} from "../lib/geometry";
+
+type Wall =
+  | "north"
+  | "east"
+  | "south"
+  | "west";
 
 type Door = {
   id: number;
@@ -36,7 +47,9 @@ type RoomEditorProps = {
   doors: Door[];
   windows: Window[];
   furniture: FurnitureItem[];
-  onFurnitureChange: (furniture: FurnitureItem[]) => void;
+  onFurnitureChange: (
+    furniture: FurnitureItem[]
+  ) => void;
 };
 
 const MAX_EDITOR_WIDTH = 650;
@@ -51,9 +64,15 @@ export default function RoomEditor({
   furniture,
   onFurnitureChange,
 }: RoomEditorProps) {
-  const [selectedId, setSelectedId] = useState<number | null>(
-    furniture.length > 0 ? furniture[0].id : null
-  );
+  const [selectedId, setSelectedId] =
+    useState<number | null>(
+      furniture.length > 0
+        ? furniture[0].id
+        : null
+    );
+
+  const [isGenerating, setIsGenerating] =
+    useState(false);
 
   const scale = useMemo(() => {
     if (!roomWidth || !roomLength) {
@@ -66,12 +85,55 @@ export default function RoomEditor({
     );
   }, [roomWidth, roomLength]);
 
-  const svgWidth = roomWidth * scale;
-  const svgHeight = roomLength * scale;
+  const svgWidth =
+    roomWidth * scale;
 
-  const selectedFurniture = furniture.find(
-    (item) => item.id === selectedId
-  );
+  const svgHeight =
+    roomLength * scale;
+
+  const layoutResult = useMemo(() => {
+    const doorOpenings: Opening[] =
+      doors.map((door) => ({
+        wall: door.wall,
+        position: Number(
+          door.position
+        ),
+        width: Number(
+          door.width
+        ),
+      }));
+
+    const windowOpenings: Opening[] =
+      windows.map((window) => ({
+        wall: window.wall,
+        position: Number(
+          window.position
+        ),
+        width: Number(
+          window.width
+        ),
+      }));
+
+    return calculateLayout(
+      furniture,
+      doorOpenings,
+      windowOpenings,
+      roomWidth,
+      roomLength
+    );
+  }, [
+    furniture,
+    doors,
+    windows,
+    roomWidth,
+    roomLength,
+  ]);
+
+  const selectedFurniture =
+    furniture.find(
+      (item) =>
+        item.id === selectedId
+    );
 
   function updateFurniture(
     id: number,
@@ -80,27 +142,13 @@ export default function RoomEditor({
     onFurnitureChange(
       furniture.map((item) =>
         item.id === id
-          ? { ...item, ...changes }
+          ? {
+              ...item,
+              ...changes,
+            }
           : item
       )
     );
-  }
-
-  function getFurnitureDimensions(item: FurnitureItem) {
-    const width = Number(item.width);
-    const length = Number(item.length);
-
-    if (item.rotation % 180 === 0) {
-      return {
-        width,
-        length,
-      };
-    }
-
-    return {
-      width: length,
-      length: width,
-    };
   }
 
   function handleDrag(
@@ -109,32 +157,49 @@ export default function RoomEditor({
   ) {
     event.stopPropagation();
 
-    const startX = event.clientX;
-    const startY = event.clientY;
+    const startX =
+      event.clientX;
+
+    const startY =
+      event.clientY;
 
     const initialX = item.x;
     const initialY = item.y;
 
-    const dimensions =
-      getFurnitureDimensions(item);
+    const initialRectangle =
+      getFurnitureRectangle({
+        id: item.id,
+        type: item.type,
+        x: item.x,
+        y: item.y,
+        width: Number(
+          item.width
+        ),
+        length: Number(
+          item.length
+        ),
+        rotation:
+          item.rotation,
+      });
 
-    function handleMouseMove(moveEvent: MouseEvent) {
+    function handleMouseMove(
+      moveEvent: MouseEvent
+    ) {
       const deltaX =
-        (moveEvent.clientX - startX) / scale;
+        (moveEvent.clientX -
+          startX) /
+        scale;
 
       const deltaY =
-        (moveEvent.clientY - startY) / scale;
-
-      const maxX =
-        roomWidth - dimensions.width;
-
-      const maxY =
-        roomLength - dimensions.length;
+        (moveEvent.clientY -
+          startY) /
+        scale;
 
       const newX = Math.max(
         0,
         Math.min(
-          maxX,
+          roomWidth -
+            initialRectangle.width,
           initialX + deltaX
         )
       );
@@ -142,15 +207,23 @@ export default function RoomEditor({
       const newY = Math.max(
         0,
         Math.min(
-          maxY,
+          roomLength -
+            initialRectangle.height,
           initialY + deltaY
         )
       );
 
-      updateFurniture(item.id, {
-        x: Number(newX.toFixed(2)),
-        y: Number(newY.toFixed(2)),
-      });
+      updateFurniture(
+        item.id,
+        {
+          x: Number(
+            newX.toFixed(2)
+          ),
+          y: Number(
+            newY.toFixed(2)
+          ),
+        }
+      );
     }
 
     function handleMouseUp() {
@@ -181,25 +254,38 @@ export default function RoomEditor({
       return;
     }
 
-    const currentDimensions =
-      getFurnitureDimensions(
-        selectedFurniture
-      );
+    const currentRectangle =
+      getFurnitureRectangle({
+        id: selectedFurniture.id,
+        type: selectedFurniture.type,
+        x: selectedFurniture.x,
+        y: selectedFurniture.y,
+        width: Number(
+          selectedFurniture.width
+        ),
+        length: Number(
+          selectedFurniture.length
+        ),
+        rotation:
+          selectedFurniture.rotation,
+      });
 
     const newRotation =
-      (selectedFurniture.rotation + 90) % 360;
+      (selectedFurniture.rotation +
+        90) %
+      360;
 
     const newWidth =
-      currentDimensions.length;
+      currentRectangle.height;
 
-    const newLength =
-      currentDimensions.width;
+    const newHeight =
+      currentRectangle.width;
 
     const maxX =
       roomWidth - newWidth;
 
     const maxY =
-      roomLength - newLength;
+      roomLength - newHeight;
 
     updateFurniture(
       selectedFurniture.id,
@@ -217,16 +303,81 @@ export default function RoomEditor({
     );
   }
 
+  function handleGenerateLayout() {
+    if (furniture.length === 0) {
+      return;
+    }
+
+    setIsGenerating(true);
+
+    // Small delay so the button visibly
+    // communicates that generation is happening.
+    setTimeout(() => {
+      const doorOpenings: Opening[] =
+        doors.map((door) => ({
+          wall: door.wall,
+          position: Number(
+            door.position
+          ),
+          width: Number(
+            door.width
+          ),
+        }));
+
+      const windowOpenings: Opening[] =
+        windows.map((window) => ({
+          wall: window.wall,
+          position: Number(
+            window.position
+          ),
+          width: Number(
+            window.width
+          ),
+        }));
+
+      const generated =
+        generateLayout(
+          furniture,
+          doorOpenings,
+          windowOpenings,
+          roomWidth,
+          roomLength
+        );
+
+      onFurnitureChange(
+        generated.map((item) => ({
+          ...item,
+          x: Number(
+            item.x.toFixed(2)
+          ),
+          y: Number(
+            item.y.toFixed(2)
+          ),
+        }))
+      );
+
+      if (generated.length > 0) {
+        setSelectedId(
+          generated[0].id
+        );
+      }
+
+      setIsGenerating(false);
+    }, 100);
+  }
+
   function wallPosition(
     wall: Wall,
     position: string,
     width: string
   ) {
     const pos =
-      Number(position) * scale;
+      Number(position) *
+      scale;
 
     const itemWidth =
-      Number(width) * scale;
+      Number(width) *
+      scale;
 
     switch (wall) {
       case "north":
@@ -240,14 +391,16 @@ export default function RoomEditor({
       case "south":
         return {
           x: pos,
-          y: svgHeight - 8,
+          y:
+            svgHeight - 8,
           width: itemWidth,
           height: 8,
         };
 
       case "east":
         return {
-          x: svgWidth - 8,
+          x:
+            svgWidth - 8,
           y: pos,
           width: 8,
           height: itemWidth,
@@ -264,7 +417,7 @@ export default function RoomEditor({
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_260px]">
+    <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
 
       {/* Floor plan */}
       <div className="flex min-h-[540px] items-center justify-center rounded-2xl border border-gray-200 bg-gray-100 p-6">
@@ -274,8 +427,11 @@ export default function RoomEditor({
             height={svgHeight}
             viewBox={`0 0 ${svgWidth} ${svgHeight}`}
             className="overflow-visible rounded-lg bg-white shadow-lg"
-            onClick={() => setSelectedId(null)}
+            onClick={() =>
+              setSelectedId(null)
+            }
           >
+
             {/* Room */}
             <rect
               x="0"
@@ -291,33 +447,53 @@ export default function RoomEditor({
             <g opacity="0.08">
               {Array.from({
                 length:
-                  Math.floor(roomWidth) + 1,
-              }).map((_, index) => (
-                <line
-                  key={`vertical-${index}`}
-                  x1={index * scale}
-                  y1="0"
-                  x2={index * scale}
-                  y2={svgHeight}
-                  stroke="black"
-                  strokeWidth="1"
-                />
-              ))}
+                  Math.floor(
+                    roomWidth
+                  ) + 1,
+              }).map(
+                (_, index) => (
+                  <line
+                    key={`v-${index}`}
+                    x1={
+                      index * scale
+                    }
+                    y1="0"
+                    x2={
+                      index * scale
+                    }
+                    y2={
+                      svgHeight
+                    }
+                    stroke="black"
+                    strokeWidth="1"
+                  />
+                )
+              )}
 
               {Array.from({
                 length:
-                  Math.floor(roomLength) + 1,
-              }).map((_, index) => (
-                <line
-                  key={`horizontal-${index}`}
-                  x1="0"
-                  y1={index * scale}
-                  x2={svgWidth}
-                  y2={index * scale}
-                  stroke="black"
-                  strokeWidth="1"
-                />
-              ))}
+                  Math.floor(
+                    roomLength
+                  ) + 1,
+              }).map(
+                (_, index) => (
+                  <line
+                    key={`h-${index}`}
+                    x1="0"
+                    y1={
+                      index * scale
+                    }
+                    x2={
+                      svgWidth
+                    }
+                    y2={
+                      index * scale
+                    }
+                    stroke="black"
+                    strokeWidth="1"
+                  />
+                )
+              )}
             </g>
 
             {/* Doors */}
@@ -336,10 +512,7 @@ export default function RoomEditor({
               return (
                 <rect
                   key={`door-${door.id}`}
-                  x={position.x}
-                  y={position.y}
-                  width={position.width}
-                  height={position.height}
+                  {...position}
                   fill="#d1d5db"
                   stroke="#6b7280"
                   strokeWidth="2"
@@ -348,116 +521,139 @@ export default function RoomEditor({
             })}
 
             {/* Windows */}
-            {windows.map((window) => {
-              const position =
-                wallPosition(
-                  window.wall,
-                  window.position,
-                  window.width
+            {windows.map(
+              (window) => {
+                const position =
+                  wallPosition(
+                    window.wall,
+                    window.position,
+                    window.width
+                  );
+
+                if (!position) {
+                  return null;
+                }
+
+                return (
+                  <rect
+                    key={`window-${window.id}`}
+                    {...position}
+                    fill="#93c5fd"
+                    stroke="#2563eb"
+                    strokeWidth="2"
+                  />
                 );
-
-              if (!position) {
-                return null;
               }
-
-              return (
-                <rect
-                  key={`window-${window.id}`}
-                  x={position.x}
-                  y={position.y}
-                  width={position.width}
-                  height={position.height}
-                  fill="#93c5fd"
-                  stroke="#2563eb"
-                  strokeWidth="2"
-                />
-              );
-            })}
+            )}
 
             {/* Furniture */}
-            {furniture.map((item) => {
-              const originalWidth =
-                Number(item.width) * scale;
+            {furniture.map(
+              (item) => {
+                const rectangle =
+                  getFurnitureRectangle({
+                    id: item.id,
+                    type: item.type,
+                    x: item.x,
+                    y: item.y,
+                    width: Number(
+                      item.width
+                    ),
+                    length: Number(
+                      item.length
+                    ),
+                    rotation:
+                      item.rotation,
+                  });
 
-              const originalLength =
-                Number(item.length) * scale;
+                const width =
+                  rectangle.width *
+                  scale;
 
-              const dimensions =
-                getFurnitureDimensions(item);
+                const height =
+                  rectangle.height *
+                  scale;
 
-              const displayWidth =
-                dimensions.width * scale;
+                const centerX =
+                  item.x * scale +
+                  width / 2;
 
-              const displayHeight =
-                dimensions.length * scale;
+                const centerY =
+                  item.y * scale +
+                  height / 2;
 
-              const isSelected =
-                item.id === selectedId;
+                const isSelected =
+                  item.id ===
+                  selectedId;
 
-              const centerX =
-                item.x * scale +
-                displayWidth / 2;
+                const hasIssue =
+                  layoutResult.issues.some(
+                    (issue) =>
+                      issue.furnitureId ===
+                      item.id
+                  );
 
-              const centerY =
-                item.y * scale +
-                displayHeight / 2;
-
-              return (
-                <g
-                  key={item.id}
-                >
+                return (
                   <g
-                    transform={`rotate(${item.rotation} ${centerX} ${centerY})`}
+                    key={item.id}
+                    onClick={(event) => {
+                      event.stopPropagation();
+
+                      setSelectedId(
+                        item.id
+                      );
+                    }}
                   >
                     <rect
-                      x={item.x * scale}
-                      y={item.y * scale}
-                      width={originalWidth}
-                      height={originalLength}
+                      x={
+                        item.x *
+                        scale
+                      }
+                      y={
+                        item.y *
+                        scale
+                      }
+                      width={width}
+                      height={height}
                       rx="4"
                       fill={
-                        isSelected
+                        hasIssue
+                          ? "#fee2e2"
+                          : isSelected
                           ? "#dbeafe"
                           : "#e5e7eb"
                       }
                       stroke={
-                        isSelected
+                        hasIssue
+                          ? "#dc2626"
+                          : isSelected
                           ? "#2563eb"
                           : "#6b7280"
                       }
                       strokeWidth={
-                        isSelected ? "3" : "2"
+                        isSelected
+                          ? 3
+                          : 2
                       }
-                      className="cursor-pointer"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setSelectedId(item.id);
-                      }}
-                      onMouseDown={(event) => {
-                        event.stopPropagation();
-                        setSelectedId(item.id);
+                      className="cursor-move"
+                      onMouseDown={(
+                        event
+                      ) =>
                         handleDrag(
                           event,
                           item
-                        );
-                      }}
+                        )
+                      }
                     />
 
                     <text
-                      x={
-                        item.x * scale +
-                        originalWidth / 2
-                      }
-                      y={
-                        item.y * scale +
-                        originalLength / 2
-                      }
+                      x={centerX}
+                      y={centerY}
                       textAnchor="middle"
                       dominantBaseline="middle"
                       fontSize={Math.max(
                         10,
                         Math.min(
-                          originalWidth / 5,
+                          width / 5,
                           14
                         )
                       )}
@@ -467,9 +663,9 @@ export default function RoomEditor({
                       {item.type}
                     </text>
                   </g>
-                </g>
-              );
-            })}
+                );
+              }
+            )}
           </svg>
         </div>
       </div>
@@ -478,12 +674,54 @@ export default function RoomEditor({
       <aside className="rounded-2xl border border-gray-200 bg-white p-5">
 
         <h2 className="text-lg font-semibold">
-          Room
+          Layout status
         </h2>
 
-        <p className="mt-1 text-sm text-gray-500">
-          {roomWidth} × {roomLength} {unit}
-        </p>
+        <div className="mt-3 rounded-xl bg-gray-50 p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-500">
+              Score
+            </span>
+
+            <span className="text-2xl font-bold">
+              {layoutResult.score}
+            </span>
+          </div>
+
+          <p
+            className={`mt-2 text-sm font-medium ${
+              layoutResult.valid
+                ? "text-green-600"
+                : "text-red-600"
+            }`}
+          >
+            {layoutResult.valid
+              ? "Layout is valid"
+              : "Layout needs improvement"}
+          </p>
+        </div>
+
+        {layoutResult.issues.length >
+          0 && (
+          <div className="mt-4 max-h-48 overflow-auto rounded-xl border border-red-100 bg-red-50 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-red-700">
+              Issues
+            </p>
+
+            <div className="space-y-2">
+              {layoutResult.issues.map(
+                (issue, index) => (
+                  <p
+                    key={`${issue.furnitureId}-${index}`}
+                    className="text-xs leading-5 text-red-700"
+                  >
+                    • {issue.message}
+                  </p>
+                )
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="my-5 border-t border-gray-100" />
 
@@ -492,22 +730,44 @@ export default function RoomEditor({
         </h3>
 
         <div className="mt-3 space-y-2">
-          {furniture.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() =>
-                setSelectedId(item.id)
-              }
-              className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${
-                selectedId === item.id
-                  ? "bg-black text-white"
-                  : "bg-gray-100 hover:bg-gray-200"
-              }`}
-            >
-              {item.type}
-            </button>
-          ))}
+          {furniture.map(
+            (item) => {
+              const hasIssue =
+                layoutResult.issues.some(
+                  (issue) =>
+                    issue.furnitureId ===
+                    item.id
+                );
+
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() =>
+                    setSelectedId(
+                      item.id
+                    )
+                  }
+                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${
+                    selectedId ===
+                    item.id
+                      ? "bg-black text-white"
+                      : "bg-gray-100 hover:bg-gray-200"
+                  }`}
+                >
+                  <span>
+                    {item.type}
+                  </span>
+
+                  {hasIssue && (
+                    <span className="text-red-500">
+                      !
+                    </span>
+                  )}
+                </button>
+              );
+            }
+          )}
         </div>
 
         {selectedFurniture && (
@@ -523,11 +783,11 @@ export default function RoomEditor({
             </p>
 
             <div className="mt-4 space-y-3 text-sm">
-
               <div className="flex justify-between">
                 <span className="text-gray-500">
                   Width
                 </span>
+
                 <span>
                   {selectedFurniture.width}{" "}
                   {unit}
@@ -538,6 +798,7 @@ export default function RoomEditor({
                 <span className="text-gray-500">
                   Length
                 </span>
+
                 <span>
                   {selectedFurniture.length}{" "}
                   {unit}
@@ -548,6 +809,7 @@ export default function RoomEditor({
                 <span className="text-gray-500">
                   X
                 </span>
+
                 <span>
                   {selectedFurniture.x.toFixed(
                     2
@@ -560,6 +822,7 @@ export default function RoomEditor({
                 <span className="text-gray-500">
                   Y
                 </span>
+
                 <span>
                   {selectedFurniture.y.toFixed(
                     2
@@ -572,16 +835,21 @@ export default function RoomEditor({
                 <span className="text-gray-500">
                   Rotation
                 </span>
+
                 <span>
-                  {selectedFurniture.rotation}°
+                  {
+                    selectedFurniture.rotation
+                  }
+                  °
                 </span>
               </div>
-
             </div>
 
             <button
               type="button"
-              onClick={rotateSelected}
+              onClick={
+                rotateSelected
+              }
               className="mt-5 w-full rounded-lg bg-black px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-gray-800"
             >
               ↻ Rotate 90°
@@ -589,10 +857,24 @@ export default function RoomEditor({
           </>
         )}
 
+        {/* Generate Layout */}
+        <button
+          type="button"
+          onClick={
+            handleGenerateLayout
+          }
+          disabled={isGenerating}
+          className="mt-6 w-full rounded-lg bg-black px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {isGenerating
+            ? "Generating..."
+            : "✨ Generate Best Layout"}
+        </button>
+
         <div className="mt-6 rounded-lg bg-gray-50 p-3 text-xs leading-5 text-gray-500">
-          Click furniture to select it. Drag it to
-          move it. Use the rotate button to change
-          its orientation.
+          Red furniture indicates a layout
+          problem. Generate a layout to
+          automatically find better positions.
         </div>
 
       </aside>

@@ -1152,17 +1152,7 @@ export default function Home() {
                 ← Back
               </button>
 
-              <button
-                type="button"
-                onClick={() =>
-                  alert(
-                    "Automatic layout generation will be added next."
-                  )
-                }
-                className="rounded-xl bg-black px-6 py-3 font-semibold text-white hover:bg-gray-800"
-              >
-                ✨ Generate Layouts
-              </button>
+            
             </div>
           </section>
         )}
