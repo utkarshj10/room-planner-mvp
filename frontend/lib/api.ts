@@ -5,6 +5,7 @@ const API_URL =
 export async function checkBackendHealth(): Promise<{
   status: string;
   service: string;
+  database?: string;
 }> {
   const response = await fetch(
     `${API_URL}/api/health`,
@@ -21,7 +22,6 @@ export async function checkBackendHealth(): Promise<{
 
   return response.json();
 }
-
 
 export async function createRoom(room: unknown) {
   const response = await fetch(
@@ -44,14 +44,12 @@ export async function createRoom(room: unknown) {
   return response.json();
 }
 
-
 export type SavedLayout = {
   id: string;
   room_id: string;
   name: string;
   furniture: any[];
 };
-
 
 export async function saveLayout(
   roomId: string,
@@ -82,7 +80,6 @@ export async function saveLayout(
   return response.json();
 }
 
-
 export async function getSavedLayouts(
   roomId: string
 ): Promise<SavedLayout[]> {
@@ -102,7 +99,6 @@ export async function getSavedLayouts(
   return response.json();
 }
 
-
 export async function deleteLayout(
   layoutId: string
 ): Promise<void> {
@@ -118,4 +114,57 @@ export async function deleteLayout(
       "Could not delete layout"
     );
   }
+}
+
+export type AIAdviceRequest = {
+  room: {
+    width: number;
+    length: number;
+    unit: string;
+  };
+  doors: unknown[];
+  windows: unknown[];
+  furniture: unknown[];
+  layout_score: number;
+  layout_valid: boolean;
+  issues: unknown[];
+};
+
+export async function askAIAdvice(
+  roomFacts: AIAdviceRequest
+): Promise<string> {
+  const response = await fetch(
+    `${API_URL}/api/ai/advice`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        room_facts: roomFacts,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    let message = "Could not get AI advice.";
+
+    try {
+      const data = await response.json();
+
+      if (typeof data?.detail === "string") {
+        message = data.detail;
+      }
+    } catch {
+      // Keep the default message.
+    }
+
+    throw new Error(message);
+  }
+
+  const data: {
+    advice: string;
+  } = await response.json();
+
+  return data.advice;
 }

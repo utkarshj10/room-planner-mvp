@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import check_database_connection
 from app.routes.rooms import router as rooms_router
-from app.routes.layouts import router as layouts_router
+from app.routes.ai import router as ai_router
 
 
 app = FastAPI(
@@ -26,7 +26,9 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health_check():
-    database_connected = check_database_connection()
+    database_connected = (
+        check_database_connection()
+    )
 
     return {
         "status": "ok",
@@ -40,4 +42,4 @@ def health_check():
 
 
 app.include_router(rooms_router)
-app.include_router(layouts_router)
+app.include_router(ai_router)

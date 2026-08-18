@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 
+import { askAIAdvice } from "../lib/api";
+
 import {
   calculateLayout,
   generateLayouts,
@@ -77,6 +79,15 @@ export default function RoomEditor({
 
   const [generatedLayouts, setGeneratedLayouts] =
     useState<GeneratedLayout[]>([]);
+
+  const [isAiLoading, setIsAiLoading] =
+    useState(false);
+
+  const [aiAdvice, setAiAdvice] =
+    useState<string>("");
+
+  const [aiError, setAiError] =
+    useState<string>("");
 
   const scale = useMemo(() => {
     if (!roomWidth || !roomLength) {
@@ -275,6 +286,64 @@ export default function RoomEditor({
         ),
       }
     );
+  }
+
+  async function handleAskAI() {
+    if (furniture.length === 0) {
+      setAiError("Add at least one furniture item first.");
+      setAiAdvice("");
+      return;
+    }
+
+    setIsAiLoading(true);
+    setAiError("");
+    setAiAdvice("");
+
+    try {
+      const advice = await askAIAdvice({
+        room: {
+          width: roomWidth,
+          length: roomLength,
+          unit,
+        },
+        doors: doors.map((door) => ({
+          wall: door.wall,
+          position: Number(door.position),
+          width: Number(door.width),
+        })),
+        windows: windows.map((window) => ({
+          wall: window.wall,
+          position: Number(window.position),
+          width: Number(window.width),
+        })),
+        furniture: furniture.map((item) => ({
+          id: item.id,
+          type: item.type,
+          width: Number(item.width),
+          length: Number(item.length),
+          x: item.x,
+          y: item.y,
+          rotation: item.rotation,
+        })),
+        layout_score: layoutResult.score,
+        layout_valid: layoutResult.valid,
+        issues: layoutResult.issues.map((issue) => ({
+          furnitureId: issue.furnitureId,
+          type: issue.type,
+          message: issue.message,
+        })),
+      });
+
+      setAiAdvice(advice);
+    } catch (error) {
+      setAiError(
+        error instanceof Error
+          ? error.message
+          : "Could not get AI advice."
+      );
+    } finally {
+      setIsAiLoading(false);
+    }
   }
 
   function handleGenerateLayouts() {
@@ -786,6 +855,46 @@ export default function RoomEditor({
             </button>
           </>
         )}
+
+        <div className="mt-6 border-t pt-5">
+          <h3 className="text-sm font-semibold">
+            AI Interior Advisor
+          </h3>
+
+          <p className="mt-1 text-xs leading-5 text-gray-500">
+            Get practical advice based on your
+            actual room geometry and furniture.
+          </p>
+
+          <button
+            type="button"
+            onClick={handleAskAI}
+            disabled={isAiLoading}
+            className="mt-3 w-full rounded-lg bg-black px-4 py-3 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-50"
+          >
+            {isAiLoading
+              ? "Analyzing layout..."
+              : "✨ Ask AI for Advice"}
+          </button>
+
+          {aiError && (
+            <div className="mt-3 rounded-lg bg-red-50 p-3 text-xs leading-5 text-red-700">
+              {aiError}
+            </div>
+          )}
+
+          {aiAdvice && (
+            <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+              <p className="text-sm font-semibold">
+                AI recommendations
+              </p>
+
+              <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-gray-700">
+                {aiAdvice}
+              </div>
+            </div>
+          )}
+        </div>
 
         <button
           type="button"
