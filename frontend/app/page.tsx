@@ -12,6 +12,7 @@ import {
 import RoomEditor, {
   FurnitureItem,
 } from "../components/RoomEditor";
+import { calculateLayout } from "../lib/geometry";
 
 type Wall = "north" | "east" | "south" | "west";
 
@@ -123,6 +124,15 @@ export default function Home() {
   const [showRoomList, setShowRoomList] = useState(false);
   const [isRestoringSession, setIsRestoringSession] = useState(true);
 
+  const [advisorResult, setAdvisorResult] = useState<{
+    score: number;
+    strengths: string[];
+    issues: string[];
+    suggestions: string[];
+  } | null>(null);
+
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
   useEffect(() => {
     checkBackendHealth()
       .then(() => setBackendConnected(true))
@@ -186,6 +196,114 @@ export default function Home() {
     localStorage.setItem("roomPlannerSessions", JSON.stringify(updated));
     localStorage.setItem("roomPlannerLastRoomId", roomId);
   }, [isRestoringSession, roomId, room, doors, windows, furniture]);
+
+  function analyzeLayout() {
+    setIsAnalyzing(true);
+    setAdvisorResult(null);
+    setError("");
+
+    try {
+      const roomWidth = Number(room.width);
+      const roomLength = Number(room.length);
+
+      const result = calculateLayout(
+        furniture.map((item) => ({
+          id: item.id,
+          type: item.type,
+          x: Number(item.x ?? 0),
+          y: Number(item.y ?? 0),
+          width: Number(item.width),
+          length: Number(item.length),
+          rotation: Number(item.rotation ?? 0),
+        })),
+        doors.map((door) => ({
+          wall: door.wall,
+          position: Number(door.position),
+          width: Number(door.width),
+        })),
+        windows.map((window) => ({
+          wall: window.wall,
+          position: Number(window.position),
+          width: Number(window.width),
+        })),
+        roomWidth,
+        roomLength
+      );
+
+      const issues = result.issues.map((issue) => issue.message);
+      const uniqueIssues = [...new Set(issues)].slice(0, 5);
+      const strengths: string[] = [];
+      const suggestions: string[] = [];
+
+      if (result.valid) {
+        strengths.push("All furniture is inside the room.");
+        strengths.push("No furniture is directly overlapping another item.");
+      }
+
+      if (!result.issues.some((issue) => issue.type === "door_collision")) {
+        strengths.push("The entrance areas are kept clear.");
+      } else {
+        suggestions.push("Move furniture away from the entrance so the door area stays usable.");
+      }
+
+      if (!result.issues.some((issue) => issue.type === "window_collision")) {
+        strengths.push("Windows are not directly blocked by furniture.");
+      } else {
+        suggestions.push("Move furniture away from the windows to keep them accessible.");
+      }
+
+      if (result.issues.some((issue) => issue.type === "clearance")) {
+        suggestions.push("Increase the gap between nearby furniture to improve walking space.");
+      } else {
+        strengths.push("Furniture has reasonable separation.");
+      }
+
+      if (furniture.length >= 2) {
+        const centerX = roomWidth / 2;
+        const centerY = roomLength / 2;
+        const centerBlocked = furniture.some((item) => {
+          const rotated = Number(item.rotation ?? 0) % 180 !== 0;
+          const width = rotated ? Number(item.length) : Number(item.width);
+          const height = rotated ? Number(item.width) : Number(item.length);
+          return (
+            Number(item.x) < centerX + 1 &&
+            Number(item.x) + width > centerX - 1 &&
+            Number(item.y) < centerY + 1 &&
+            Number(item.y) + height > centerY - 1
+          );
+        });
+
+        if (!centerBlocked) {
+          strengths.push("The center of the room remains relatively open.");
+        } else {
+          suggestions.push("Consider moving one large item toward a wall to open the center of the room.");
+        }
+      }
+
+      if (uniqueIssues.length > 0) {
+        suggestions.push(...uniqueIssues);
+      }
+
+      if (strengths.length === 0) {
+        strengths.push("The layout has been checked against the room geometry.");
+      }
+
+      if (suggestions.length === 0) {
+        suggestions.push("The arrangement looks solid. Try the generated alternatives if you want more options.");
+      }
+
+      setAdvisorResult({
+        score: result.score,
+        strengths: [...new Set(strengths)].slice(0, 4),
+        issues: uniqueIssues,
+        suggestions: [...new Set(suggestions)].slice(0, 5),
+      });
+    } catch {
+      setError("Could not analyze this layout.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }
 
   function updateRoomField(
     field: keyof RoomForm,
@@ -1403,6 +1521,59 @@ export default function Home() {
                 setFurniture
               }
             />
+
+            <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold">Layout Advisor</h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Check usability, collisions, clearances and room flow. This MVP runs locally, so there is no AI API cost yet.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={analyzeLayout}
+                  disabled={isAnalyzing}
+                  className="rounded-xl bg-black px-5 py-3 font-semibold text-white disabled:opacity-50"
+                >
+                  {isAnalyzing ? "Analyzing..." : "Analyze Layout"}
+                </button>
+              </div>
+
+              {advisorResult && (
+                <div className="mt-6 space-y-5">
+                  <div className="flex items-center justify-between rounded-xl bg-gray-50 p-5">
+                    <div>
+                      <p className="text-sm text-gray-500">Overall usability</p>
+                      <p className="mt-1 text-3xl font-bold">{advisorResult.score}/100</p>
+                    </div>
+                    <div className="text-right text-sm text-gray-500">
+                      Based on your current furniture arrangement
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="rounded-xl border border-gray-200 p-4">
+                      <h3 className="font-semibold">What looks good</h3>
+                      <ul className="mt-3 space-y-2 text-sm text-gray-600">
+                        {advisorResult.strengths.map((item, index) => (
+                          <li key={index}>✓ {item}</li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div className="rounded-xl border border-gray-200 p-4">
+                      <h3 className="font-semibold">Suggestions</h3>
+                      <ul className="mt-3 space-y-2 text-sm text-gray-600">
+                        {advisorResult.suggestions.map((item, index) => (
+                          <li key={index}>• {item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
 
             <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
