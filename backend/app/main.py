@@ -1,12 +1,16 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.database import check_database_connection
 from app.routes.rooms import router as rooms_router
+from app.routes.layouts import router as layouts_router
+
 
 app = FastAPI(
     title="Room Planner API",
-    version="0.1.0",
+    version="1.0.0",
 )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,19 +23,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(rooms_router)
-
-
-@app.get("/")
-def root():
-    return {
-        "message": "Room Planner API is running"
-    }
-
 
 @app.get("/api/health")
-def health():
+def health_check():
+    database_connected = check_database_connection()
+
     return {
         "status": "ok",
-        "service": "room-planner-backend",
+        "service": "FastAPI backend",
+        "database": (
+            "connected"
+            if database_connected
+            else "not connected"
+        ),
     }
+
+
+app.include_router(rooms_router)
+app.include_router(layouts_router)

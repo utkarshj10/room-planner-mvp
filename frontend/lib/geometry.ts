@@ -44,20 +44,30 @@ export type LayoutResult = {
   valid: boolean;
 };
 
+export type GeneratedLayout = {
+  furniture: FurnitureGeometry[];
+  score: number;
+};
+
+/* =========================================================
+   BASIC GEOMETRY
+   ========================================================= */
+
 export function getFurnitureRectangle(
   furniture: FurnitureGeometry
 ): Rectangle {
-  const width = Number(furniture.width);
-  const length = Number(furniture.length);
-
   const rotated =
     furniture.rotation % 180 !== 0;
 
   return {
     x: Number(furniture.x),
     y: Number(furniture.y),
-    width: rotated ? length : width,
-    height: rotated ? width : length,
+    width: rotated
+      ? Number(furniture.length)
+      : Number(furniture.width),
+    height: rotated
+      ? Number(furniture.width)
+      : Number(furniture.length),
   };
 }
 
@@ -79,97 +89,1421 @@ export function isInsideRoom(
   roomWidth: number,
   roomLength: number
 ): boolean {
-  const epsilon = 0.001;
-
   return (
-    rectangle.x >= -epsilon &&
-    rectangle.y >= -epsilon &&
+    rectangle.x >= 0 &&
+    rectangle.y >= 0 &&
     rectangle.x + rectangle.width <=
-      roomWidth + epsilon &&
+      roomWidth &&
     rectangle.y + rectangle.height <=
-      roomLength + epsilon
+      roomLength
   );
 }
 
-/*
- * Convert a door/window into a rectangle.
- *
- * The opening itself is small, but we also use
- * an additional clearance zone when generating
- * layouts.
- */
+function rectangleDistance(
+  a: Rectangle,
+  b: Rectangle
+): number {
+  const horizontal = Math.max(
+    0,
+    Math.max(
+      a.x - (b.x + b.width),
+      b.x - (a.x + a.width)
+    )
+  );
+
+  const vertical = Math.max(
+    0,
+    Math.max(
+      a.y - (b.y + b.height),
+      b.y - (a.y + a.height)
+    )
+  );
+
+  return Math.sqrt(
+    horizontal * horizontal +
+      vertical * vertical
+  );
+}
+
+/* =========================================================
+   OPENING GEOMETRY
+   ========================================================= */
+
 function openingToRectangle(
   opening: Opening,
   roomWidth: number,
   roomLength: number,
-  extraClearance = 0
+  clearance = 0
 ): Rectangle {
-  const wallThickness = 0.05;
-
-  const position = Number(
-    opening.position
-  );
-
-  const width = Number(
-    opening.width
-  );
+  const position = Number(opening.position);
+  const width = Number(opening.width);
 
   switch (opening.wall) {
     case "north":
       return {
-        x: position - extraClearance,
+        x: position - clearance,
         y: 0,
-        width:
-          width +
-          extraClearance * 2,
-        height:
-          wallThickness +
-          extraClearance,
+        width: width + clearance * 2,
+        height: 0.1 + clearance,
       };
 
     case "south":
       return {
-        x: position - extraClearance,
+        x: position - clearance,
         y:
           roomLength -
-          wallThickness -
-          extraClearance,
-        width:
-          width +
-          extraClearance * 2,
-        height:
-          wallThickness +
-          extraClearance,
+          0.1 -
+          clearance,
+        width: width + clearance * 2,
+        height: 0.1 + clearance,
+      };
+
+    case "west":
+      return {
+        x: 0,
+        y: position - clearance,
+        width: 0.1 + clearance,
+        height: width + clearance * 2,
       };
 
     case "east":
       return {
         x:
           roomWidth -
-          wallThickness -
-          extraClearance,
-        y: position - extraClearance,
-        width:
-          wallThickness +
-          extraClearance,
-        height:
-          width +
-          extraClearance * 2,
-      };
-
-    case "west":
-      return {
-        x: 0,
-        y: position - extraClearance,
-        width:
-          wallThickness +
-          extraClearance,
-        height:
-          width +
-          extraClearance * 2,
+          0.1 -
+          clearance,
+        y: position - clearance,
+        width: 0.1 + clearance,
+        height: width + clearance * 2,
       };
   }
 }
+
+/* =========================================================
+   RANDOM HELPER
+   ========================================================= */
+
+function seededRandom(
+  seed: number
+): number {
+  const value =
+    Math.sin(seed * 12.9898) *
+    43758.5453;
+
+  return value -
+    Math.floor(value);
+}
+
+/* =========================================================
+   CANDIDATE POSITIONS
+   ========================================================= */
+
+function getCandidatePositions(
+  width: number,
+  height: number,
+  roomWidth: number,
+  roomLength: number,
+  seed: number
+): Array<{
+  x: number;
+  y: number;
+}> {
+  const positions: Array<{
+    x: number;
+    y: number;
+  }> = [];
+
+  /*
+   * Use a 0.5m grid.
+   */
+  for (
+    let y = 0;
+    y <= roomLength - height;
+    y += 0.5
+  ) {
+    for (
+      let x = 0;
+      x <= roomWidth - width;
+      x += 0.5
+    ) {
+      positions.push({
+        x: Number(x.toFixed(2)),
+        y: Number(y.toFixed(2)),
+      });
+    }
+  }
+
+  /*
+   * Shuffle differently for each
+   * candidate layout.
+   */
+  for (
+    let i = positions.length - 1;
+    i > 0;
+    i--
+  ) {
+    const random =
+      seededRandom(seed + i * 17);
+
+    const j = Math.floor(
+      random * (i + 1)
+    );
+
+    [
+      positions[i],
+      positions[j],
+    ] = [
+      positions[j],
+      positions[i],
+    ];
+  }
+
+  return positions;
+}
+
+/* =========================================================
+   BASIC VALIDATION
+   ========================================================= */
+
+function isValidPlacement(
+  furniture: FurnitureGeometry,
+  placed: FurnitureGeometry[],
+  doors: Opening[],
+  windows: Opening[],
+  roomWidth: number,
+  roomLength: number
+): boolean {
+  const rectangle =
+    getFurnitureRectangle(
+      furniture
+    );
+
+  /*
+   * 1. Stay inside room.
+   */
+  if (
+    !isInsideRoom(
+      rectangle,
+      roomWidth,
+      roomLength
+    )
+  ) {
+    return false;
+  }
+
+  /*
+   * 2. Don't overlap furniture.
+   */
+  for (const existing of placed) {
+    if (
+      rectanglesOverlap(
+        rectangle,
+        getFurnitureRectangle(
+          existing
+        ),
+        0.1
+      )
+    ) {
+      return false;
+    }
+  }
+
+  /*
+   * 3. Keep door area clear.
+   */
+  for (const door of doors) {
+    const doorZone =
+      openingToRectangle(
+        door,
+        roomWidth,
+        roomLength,
+        0.75
+      );
+
+    if (
+      rectanglesOverlap(
+        rectangle,
+        doorZone
+      )
+    ) {
+      return false;
+    }
+  }
+
+  /*
+   * 4. Keep window area reasonably clear.
+   *
+   * This is intentionally simple.
+   * No special wardrobe/bed rules.
+   */
+  for (const window of windows) {
+    const windowZone =
+      openingToRectangle(
+        window,
+        roomWidth,
+        roomLength,
+        0.5
+      );
+
+    if (
+      rectanglesOverlap(
+        rectangle,
+        windowZone
+      )
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/* =========================================================
+   GRID PATHFINDING
+   ========================================================= */
+
+type GridPoint = {
+  x: number;
+  y: number;
+};
+
+function pointToGrid(
+  x: number,
+  y: number,
+  cellSize: number
+): GridPoint {
+  return {
+    x: Math.floor(
+      x / cellSize
+    ),
+    y: Math.floor(
+      y / cellSize
+    ),
+  };
+}
+
+function gridToPoint(
+  x: number,
+  y: number,
+  cellSize: number
+): {
+  x: number;
+  y: number;
+} {
+  return {
+    x:
+      x * cellSize +
+      cellSize / 2,
+
+    y:
+      y * cellSize +
+      cellSize / 2,
+  };
+}
+
+function isBlocked(
+  gx: number,
+  gy: number,
+  furniture: FurnitureGeometry[],
+  roomWidth: number,
+  roomLength: number,
+  cellSize: number
+): boolean {
+  const point =
+    gridToPoint(
+      gx,
+      gy,
+      cellSize
+    );
+
+  if (
+    point.x < 0 ||
+    point.y < 0 ||
+    point.x >= roomWidth ||
+    point.y >= roomLength
+  ) {
+    return true;
+  }
+
+  /*
+   * Furniture plus walking clearance.
+   */
+  for (const item of furniture) {
+    const rectangle =
+      getFurnitureRectangle(
+        item
+      );
+
+    const clearance = 0.35;
+
+    const expanded = {
+      x:
+        rectangle.x -
+        clearance,
+
+      y:
+        rectangle.y -
+        clearance,
+
+      width:
+        rectangle.width +
+        clearance * 2,
+
+      height:
+        rectangle.height +
+        clearance * 2,
+    };
+
+    if (
+      point.x >= expanded.x &&
+      point.x <=
+        expanded.x +
+          expanded.width &&
+      point.y >= expanded.y &&
+      point.y <=
+        expanded.y +
+          expanded.height
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function findPath(
+  start: GridPoint,
+  target: GridPoint,
+  furniture: FurnitureGeometry[],
+  roomWidth: number,
+  roomLength: number,
+  cellSize: number
+): boolean {
+  const columns = Math.ceil(
+    roomWidth / cellSize
+  );
+
+  const rows = Math.ceil(
+    roomLength / cellSize
+  );
+
+  const startX = Math.max(
+    0,
+    Math.min(
+      columns - 1,
+      start.x
+    )
+  );
+
+  const startY = Math.max(
+    0,
+    Math.min(
+      rows - 1,
+      start.y
+    )
+  );
+
+  const targetX = Math.max(
+    0,
+    Math.min(
+      columns - 1,
+      target.x
+    )
+  );
+
+  const targetY = Math.max(
+    0,
+    Math.min(
+      rows - 1,
+      target.y
+    )
+  );
+
+  const queue: GridPoint[] = [
+    {
+      x: startX,
+      y: startY,
+    },
+  ];
+
+  const visited =
+    new Set<string>();
+
+  visited.add(
+    `${startX},${startY}`
+  );
+
+  let index = 0;
+
+  const directions = [
+    { x: 1, y: 0 },
+    { x: -1, y: 0 },
+    { x: 0, y: 1 },
+    { x: 0, y: -1 },
+  ];
+
+  while (
+    index < queue.length
+  ) {
+    const current =
+      queue[index++];
+
+    if (
+      current.x === targetX &&
+      current.y === targetY
+    ) {
+      return true;
+    }
+
+    for (
+      const direction of directions
+    ) {
+      const nextX =
+        current.x +
+        direction.x;
+
+      const nextY =
+        current.y +
+        direction.y;
+
+      if (
+        nextX < 0 ||
+        nextY < 0 ||
+        nextX >= columns ||
+        nextY >= rows
+      ) {
+        continue;
+      }
+
+      const key =
+        `${nextX},${nextY}`;
+
+      if (
+        visited.has(key)
+      ) {
+        continue;
+      }
+
+      if (
+        isBlocked(
+          nextX,
+          nextY,
+          furniture,
+          roomWidth,
+          roomLength,
+          cellSize
+        )
+      ) {
+        continue;
+      }
+
+      visited.add(key);
+
+      queue.push({
+        x: nextX,
+        y: nextY,
+      });
+    }
+  }
+
+  return false;
+}
+
+/* =========================================================
+   MOVEMENT CHECK
+   ========================================================= */
+
+function hasUsableMovement(
+  furniture: FurnitureGeometry[],
+  doors: Opening[],
+  roomWidth: number,
+  roomLength: number
+): boolean {
+  /*
+   * If there is no door entered,
+   * don't reject the layout.
+   */
+  if (doors.length === 0) {
+    return true;
+  }
+
+  const cellSize = 0.5;
+
+  /*
+   * The center of the room should be
+   * reachable from every door.
+   */
+  const target =
+    pointToGrid(
+      roomWidth / 2,
+      roomLength / 2,
+      cellSize
+    );
+
+  for (const door of doors) {
+    const doorCenter =
+      Number(door.position) +
+      Number(door.width) / 2;
+
+    let startX = 0;
+    let startY = 0;
+
+    switch (door.wall) {
+      case "north":
+        startX = doorCenter;
+        startY = cellSize;
+        break;
+
+      case "south":
+        startX = doorCenter;
+        startY =
+          roomLength -
+          cellSize;
+        break;
+
+      case "west":
+        startX = cellSize;
+        startY = doorCenter;
+        break;
+
+      case "east":
+        startX =
+          roomWidth -
+          cellSize;
+        startY = doorCenter;
+        break;
+    }
+
+    const start =
+      pointToGrid(
+        startX,
+        startY,
+        cellSize
+      );
+
+    const reachable =
+      findPath(
+        start,
+        target,
+        furniture,
+        roomWidth,
+        roomLength,
+        cellSize
+      );
+
+    if (!reachable) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/* =========================================================
+   PLACEMENT QUALITY
+   ========================================================= */
+
+function placementScore(
+  furniture: FurnitureGeometry[],
+  roomWidth: number,
+  roomLength: number,
+  windows: Opening[]
+): number {
+  let score = 0;
+
+  /*
+   * Reward furniture being reasonably
+   * close to walls.
+   */
+  for (const item of furniture) {
+    const rectangle =
+      getFurnitureRectangle(
+        item
+      );
+
+    const left =
+      rectangle.x;
+
+    const right =
+      roomWidth -
+      rectangle.x -
+      rectangle.width;
+
+    const top =
+      rectangle.y;
+
+    const bottom =
+      roomLength -
+      rectangle.y -
+      rectangle.height;
+
+    const nearestWall =
+      Math.min(
+        left,
+        right,
+        top,
+        bottom
+      );
+
+    score += Math.max(
+      0,
+      8 -
+        nearestWall * 2
+    );
+  }
+
+  /*
+   * Reward spacing.
+   */
+  for (
+    let i = 0;
+    i < furniture.length;
+    i++
+  ) {
+    for (
+      let j = i + 1;
+      j < furniture.length;
+      j++
+    ) {
+      const distance =
+        rectangleDistance(
+          getFurnitureRectangle(
+            furniture[i]
+          ),
+          getFurnitureRectangle(
+            furniture[j]
+          )
+        );
+
+      if (
+        distance >= 1.5
+      ) {
+        score += 4;
+      } else if (
+        distance >= 0.75
+      ) {
+        score += 1;
+      } else {
+        score -= 4;
+      }
+    }
+  }
+
+  /*
+   * Reward an open center.
+   */
+  const centerZone = {
+    x:
+      roomWidth / 2 -
+      Math.min(
+        roomWidth * 0.15,
+        1.5
+      ),
+
+    y:
+      roomLength / 2 -
+      Math.min(
+        roomLength * 0.15,
+        1.5
+      ),
+
+    width:
+      Math.min(
+        roomWidth * 0.3,
+        3
+      ),
+
+    height:
+      Math.min(
+        roomLength * 0.3,
+        3
+      ),
+  };
+
+  let centerBlocked = false;
+
+  for (const item of furniture) {
+    if (
+      rectanglesOverlap(
+        getFurnitureRectangle(
+          item
+        ),
+        centerZone
+      )
+    ) {
+      centerBlocked = true;
+      break;
+    }
+  }
+
+  if (!centerBlocked) {
+    score += 15;
+  }
+
+  /*
+   * Very small bonus for desks near
+   * windows, but this is NOT a hard rule.
+   */
+  for (const item of furniture) {
+    if (
+      !item.type
+        .toLowerCase()
+        .includes("desk")
+    ) {
+      continue;
+    }
+
+    const rectangle =
+      getFurnitureRectangle(
+        item
+      );
+
+    const centerX =
+      rectangle.x +
+      rectangle.width / 2;
+
+    const centerY =
+      rectangle.y +
+      rectangle.height / 2;
+
+    for (const window of windows) {
+      const windowCenter =
+        Number(window.position) +
+        Number(window.width) / 2;
+
+      let distance = Infinity;
+
+      switch (window.wall) {
+        case "north":
+          distance =
+            Math.abs(
+              centerX -
+                windowCenter
+            ) +
+            centerY;
+          break;
+
+        case "south":
+          distance =
+            Math.abs(
+              centerX -
+                windowCenter
+            ) +
+            (
+              roomLength -
+              centerY
+            );
+          break;
+
+        case "west":
+          distance =
+            Math.abs(
+              centerY -
+                windowCenter
+            ) +
+            centerX;
+          break;
+
+        case "east":
+          distance =
+            Math.abs(
+              centerY -
+                windowCenter
+            ) +
+            (
+              roomWidth -
+              centerX
+            );
+          break;
+      }
+
+      if (
+        distance < 2.5
+      ) {
+        score += 5;
+      }
+    }
+  }
+
+  return score;
+}
+
+/* =========================================================
+   LAYOUT DIFFERENCE
+   ========================================================= */
+
+function layoutDifference(
+  a: FurnitureGeometry[],
+  b: FurnitureGeometry[]
+): number {
+  let total = 0;
+  let count = 0;
+
+  for (const itemA of a) {
+    const itemB =
+      b.find(
+        (item) =>
+          item.id === itemA.id
+      );
+
+    if (!itemB) {
+      continue;
+    }
+
+    const aRect =
+      getFurnitureRectangle(
+        itemA
+      );
+
+    const bRect =
+      getFurnitureRectangle(
+        itemB
+      );
+
+    const ax =
+      aRect.x +
+      aRect.width / 2;
+
+    const ay =
+      aRect.y +
+      aRect.height / 2;
+
+    const bx =
+      bRect.x +
+      bRect.width / 2;
+
+    const by =
+      bRect.y +
+      bRect.height / 2;
+
+    total += Math.sqrt(
+      (ax - bx) ** 2 +
+        (ay - by) ** 2
+    );
+
+    if (
+      itemA.rotation !==
+      itemB.rotation
+    ) {
+      total += 1;
+    }
+
+    count++;
+  }
+
+  return count === 0
+    ? 0
+    : total / count;
+}
+
+/* =========================================================
+   GENERATE ONE LAYOUT
+   ========================================================= */
+
+function generateCandidate(
+  furniture: FurnitureGeometry[],
+  doors: Opening[],
+  windows: Opening[],
+  roomWidth: number,
+  roomLength: number,
+  seed: number
+): FurnitureGeometry[] | null {
+  const placed: FurnitureGeometry[] =
+    [];
+
+  /*
+   * Put larger furniture first.
+   */
+  const sorted =
+    [...furniture].sort(
+      (a, b) =>
+        b.width * b.length -
+        a.width * a.length
+    );
+
+  for (
+    let itemIndex = 0;
+    itemIndex < sorted.length;
+    itemIndex++
+  ) {
+    const item =
+      sorted[itemIndex];
+
+    /*
+     * Alternate which orientation
+     * gets preference.
+     */
+    const rotations =
+      seed % 2 === 0
+        ? [0, 90]
+        : [90, 0];
+
+    let best:
+      FurnitureGeometry | null =
+      null;
+
+    let bestScore =
+      -Infinity;
+
+    for (
+      let rotationIndex = 0;
+      rotationIndex <
+      rotations.length;
+      rotationIndex++
+    ) {
+      const rotation =
+        rotations[rotationIndex];
+
+      const width =
+        rotation % 180 === 0
+          ? item.width
+          : item.length;
+
+      const height =
+        rotation % 180 === 0
+          ? item.length
+          : item.width;
+
+      if (
+        width > roomWidth ||
+        height > roomLength
+      ) {
+        continue;
+      }
+
+      const positions =
+        getCandidatePositions(
+          width,
+          height,
+          roomWidth,
+          roomLength,
+          seed +
+            itemIndex * 100 +
+            rotationIndex * 1000
+        );
+
+      /*
+       * Check enough positions to find
+       * a good arrangement without making
+       * generation unnecessarily slow.
+       */
+      const limit =
+        Math.min(
+          positions.length,
+          500
+        );
+
+      for (
+        let i = 0;
+        i < limit;
+        i++
+      ) {
+        const position =
+          positions[i];
+
+        const candidate: FurnitureGeometry =
+          {
+            ...item,
+            x: position.x,
+            y: position.y,
+            rotation,
+          };
+
+        if (
+          !isValidPlacement(
+            candidate,
+            placed,
+            doors,
+            windows,
+            roomWidth,
+            roomLength
+          )
+        ) {
+          continue;
+        }
+
+        let score =
+          seededRandom(
+            seed * 10000 +
+              i * 17 +
+              itemIndex * 31
+          ) * 5;
+
+        /*
+         * Prefer useful spacing.
+         */
+        for (
+          const existing of placed
+        ) {
+          const distance =
+            rectangleDistance(
+              getFurnitureRectangle(
+                candidate
+              ),
+              getFurnitureRectangle(
+                existing
+              )
+            );
+
+          if (
+            distance >= 1.5
+          ) {
+            score += 4;
+          } else if (
+            distance >= 0.75
+          ) {
+            score += 1;
+          } else {
+            score -= 5;
+          }
+        }
+
+        /*
+         * Keep the center somewhat open.
+         */
+        const rectangle =
+          getFurnitureRectangle(
+            candidate
+          );
+
+        const centerX =
+          roomWidth / 2;
+
+        const centerY =
+          roomLength / 2;
+
+        const itemCenterX =
+          rectangle.x +
+          rectangle.width / 2;
+
+        const itemCenterY =
+          rectangle.y +
+          rectangle.height / 2;
+
+        const distanceFromCenter =
+          Math.sqrt(
+            (
+              itemCenterX -
+              centerX
+            ) ** 2 +
+              (
+                itemCenterY -
+                centerY
+            ) ** 2
+          );
+
+        score +=
+          distanceFromCenter;
+
+        if (
+          score > bestScore
+        ) {
+          bestScore = score;
+          best = candidate;
+        }
+      }
+    }
+
+    /*
+     * Couldn't place this furniture.
+     */
+    if (!best) {
+      return null;
+    }
+
+    placed.push(best);
+  }
+
+  /*
+   * Final movement check.
+   */
+  if (
+    !hasUsableMovement(
+      placed,
+      doors,
+      roomWidth,
+      roomLength
+    )
+  ) {
+    return null;
+  }
+
+  return placed;
+}
+
+/* =========================================================
+   FINAL SCORE
+   ========================================================= */
+
+function scoreLayout(
+  furniture: FurnitureGeometry[],
+  doors: Opening[],
+  windows: Opening[],
+  roomWidth: number,
+  roomLength: number
+): number {
+  const analysis =
+    calculateLayout(
+      furniture,
+      doors,
+      windows,
+      roomWidth,
+      roomLength
+    );
+
+  if (!analysis.valid) {
+    return -Infinity;
+  }
+
+  if (
+    !hasUsableMovement(
+      furniture,
+      doors,
+      roomWidth,
+      roomLength
+    )
+  ) {
+    return -Infinity;
+  }
+
+  let score = 60;
+
+  score += placementScore(
+    furniture,
+    roomWidth,
+    roomLength,
+    windows
+  );
+
+  /*
+   * Small bonus for having a valid
+   * movement path.
+   */
+  score += 15;
+
+  /*
+   * Penalize tight furniture spacing.
+   */
+  for (
+    let i = 0;
+    i < furniture.length;
+    i++
+  ) {
+    for (
+      let j = i + 1;
+      j < furniture.length;
+      j++
+    ) {
+      const distance =
+        rectangleDistance(
+          getFurnitureRectangle(
+            furniture[i]
+          ),
+          getFurnitureRectangle(
+            furniture[j]
+          )
+        );
+
+      if (
+        distance < 0.75
+      ) {
+        score -= 8;
+      }
+    }
+  }
+
+  return Math.max(
+    0,
+    Math.min(
+      100,
+      Math.round(score)
+    )
+  );
+}
+
+/* =========================================================
+   PUBLIC: GENERATE 3 LAYOUTS
+   ========================================================= */
+
+export function generateLayouts(
+  furniture: FurnitureGeometry[],
+  doors: Opening[],
+  windows: Opening[],
+  roomWidth: number,
+  roomLength: number
+): GeneratedLayout[] {
+  if (
+    furniture.length === 0 ||
+    roomWidth <= 0 ||
+    roomLength <= 0
+  ) {
+    return [];
+  }
+
+  const candidates:
+    GeneratedLayout[] = [];
+
+  /*
+   * Generate 40 possible layouts.
+   *
+   * This is completely local.
+   */
+  for (
+    let seed = 1;
+    seed <= 40;
+    seed++
+  ) {
+    const layout =
+      generateCandidate(
+        furniture,
+        doors,
+        windows,
+        roomWidth,
+        roomLength,
+        seed
+      );
+
+    if (!layout) {
+      continue;
+    }
+
+    const score =
+      scoreLayout(
+        layout,
+        doors,
+        windows,
+        roomWidth,
+        roomLength
+      );
+
+    if (
+      !Number.isFinite(score)
+    ) {
+      continue;
+    }
+
+    candidates.push({
+      furniture: layout,
+      score,
+    });
+  }
+
+  /*
+   * Best layouts first.
+   */
+  candidates.sort(
+    (a, b) =>
+      b.score - a.score
+  );
+
+  /*
+   * Select genuinely different layouts.
+   */
+  const selected:
+    GeneratedLayout[] = [];
+
+  for (
+    const candidate of candidates
+  ) {
+    let tooSimilar = false;
+
+    for (
+      const existing of selected
+    ) {
+      const difference =
+        layoutDifference(
+          existing.furniture,
+          candidate.furniture
+        );
+
+      /*
+       * Require at least ~2m average
+       * movement difference between
+       * layouts.
+       */
+      if (
+        difference < 2
+      ) {
+        tooSimilar = true;
+        break;
+      }
+    }
+
+    if (tooSimilar) {
+      continue;
+    }
+
+    selected.push(candidate);
+
+    if (
+      selected.length === 3
+    ) {
+      break;
+    }
+  }
+
+  /*
+   * If the room is small and we couldn't
+   * find three sufficiently different
+   * layouts, fill remaining slots with
+   * the next best valid candidates.
+   */
+  if (
+    selected.length < 3
+  ) {
+    for (
+      const candidate of candidates
+    ) {
+      if (
+        selected.includes(
+          candidate
+        )
+      ) {
+        continue;
+      }
+
+      selected.push(candidate);
+
+      if (
+        selected.length === 3
+      ) {
+        break;
+      }
+    }
+  }
+
+  return selected;
+}
+
+/* =========================================================
+   BACKWARDS COMPATIBILITY
+   ========================================================= */
+
+export function generateLayout(
+  furniture: FurnitureGeometry[],
+  doors: Opening[],
+  windows: Opening[],
+  roomWidth: number,
+  roomLength: number
+): FurnitureGeometry[] {
+  const layouts =
+    generateLayouts(
+      furniture,
+      doors,
+      windows,
+      roomWidth,
+      roomLength
+    );
+
+  return (
+    layouts[0]?.furniture ??
+    furniture
+  );
+}
+
+/* =========================================================
+   MANUAL LAYOUT ANALYSIS
+   ========================================================= */
 
 export function calculateLayout(
   furniture: FurnitureGeometry[],
@@ -178,23 +1512,29 @@ export function calculateLayout(
   roomWidth: number,
   roomLength: number
 ): LayoutResult {
-  const issues: LayoutIssue[] = [];
+  const issues: LayoutIssue[] =
+    [];
 
-  const rectangles = furniture.map(
-    (item) => ({
-      item,
-      rectangle:
-        getFurnitureRectangle(item),
-    })
-  );
+  const rectangles =
+    furniture.map(
+      (item) => ({
+        item,
+        rectangle:
+          getFurnitureRectangle(
+            item
+          ),
+      })
+    );
 
   /*
-   * 1. Boundary
+   * Boundary checks.
    */
-  for (const {
-    item,
-    rectangle,
-  } of rectangles) {
+  for (
+    const {
+      item,
+      rectangle,
+    } of rectangles
+  ) {
     if (
       !isInsideRoom(
         rectangle,
@@ -205,13 +1545,14 @@ export function calculateLayout(
       issues.push({
         furnitureId: item.id,
         type: "boundary",
-        message: `${item.type} is outside the room boundary.`,
+        message:
+          `${item.type} is outside the room boundary.`,
       });
     }
   }
 
   /*
-   * 2. Furniture collision
+   * Furniture collisions.
    */
   for (
     let i = 0;
@@ -223,187 +1564,194 @@ export function calculateLayout(
       j < rectangles.length;
       j++
     ) {
-      const first = rectangles[i];
-      const second = rectangles[j];
-
       if (
         rectanglesOverlap(
-          first.rectangle,
-          second.rectangle
-        )
-      ) {
-        issues.push({
-          furnitureId:
-            first.item.id,
-          type:
-            "furniture_collision",
-          message: `${first.item.type} overlaps ${second.item.type}.`,
-        });
-
-        issues.push({
-          furnitureId:
-            second.item.id,
-          type:
-            "furniture_collision",
-          message: `${second.item.type} overlaps ${first.item.type}.`,
-        });
-      }
-    }
-  }
-
-  /*
-   * 3. Door collision
-   */
-  for (const {
-    item,
-    rectangle,
-  } of rectangles) {
-    for (const door of doors) {
-      const doorRectangle =
-        openingToRectangle(
-          door,
-          roomWidth,
-          roomLength
-        );
-
-      if (
-        rectanglesOverlap(
-          rectangle,
-          doorRectangle,
-          0.05
-        )
-      ) {
-        issues.push({
-          furnitureId: item.id,
-          type: "door_collision",
-          message: `${item.type} is blocking a door.`,
-        });
-      }
-    }
-  }
-
-  /*
-   * 4. Window collision
-   */
-  for (const {
-    item,
-    rectangle,
-  } of rectangles) {
-    for (const window of windows) {
-      const windowRectangle =
-        openingToRectangle(
-          window,
-          roomWidth,
-          roomLength
-        );
-
-      if (
-        rectanglesOverlap(
-          rectangle,
-          windowRectangle,
-          0.05
-        )
-      ) {
-        issues.push({
-          furnitureId: item.id,
-          type: "window_collision",
-          message: `${item.type} is blocking a window.`,
-        });
-      }
-    }
-  }
-
-  /*
-   * 5. Walking clearance
-   */
-  const walkingClearance = 1.5;
-
-  for (
-    let i = 0;
-    i < rectangles.length;
-    i++
-  ) {
-    const current = rectangles[i];
-
-    const expanded = {
-      x:
-        current.rectangle.x -
-        walkingClearance,
-      y:
-        current.rectangle.y -
-        walkingClearance,
-      width:
-        current.rectangle.width +
-        walkingClearance * 2,
-      height:
-        current.rectangle.height +
-        walkingClearance * 2,
-    };
-
-    for (
-      let j = 0;
-      j < rectangles.length;
-      j++
-    ) {
-      if (i === j) {
-        continue;
-      }
-
-      if (
-        rectanglesOverlap(
-          expanded,
+          rectangles[i].rectangle,
           rectangles[j].rectangle
         )
       ) {
         issues.push({
           furnitureId:
-            current.item.id,
-          type: "clearance",
-          message: `There may not be enough walking space around ${current.item.type}.`,
+            rectangles[i].item.id,
+
+          type:
+            "furniture_collision",
+
+          message:
+            `${rectangles[i].item.type} overlaps ${rectangles[j].item.type}.`,
         });
 
-        break;
+        issues.push({
+          furnitureId:
+            rectangles[j].item.id,
+
+          type:
+            "furniture_collision",
+
+          message:
+            `${rectangles[j].item.type} overlaps ${rectangles[i].item.type}.`,
+        });
       }
     }
   }
 
   /*
-   * Score
+   * Door checks.
+   */
+  for (
+    const {
+      item,
+      rectangle,
+    } of rectangles
+  ) {
+    for (
+      const door of doors
+    ) {
+      const doorZone =
+        openingToRectangle(
+          door,
+          roomWidth,
+          roomLength,
+          0.1
+        );
+
+      if (
+        rectanglesOverlap(
+          rectangle,
+          doorZone
+        )
+      ) {
+        issues.push({
+          furnitureId: item.id,
+
+          type:
+            "door_collision",
+
+          message:
+            `${item.type} is blocking a door.`,
+        });
+      }
+    }
+  }
+
+  /*
+   * Window checks.
+   */
+  for (
+    const {
+      item,
+      rectangle,
+    } of rectangles
+  ) {
+    for (
+      const window of windows
+    ) {
+      const windowZone =
+        openingToRectangle(
+          window,
+          roomWidth,
+          roomLength,
+          0.5
+        );
+
+      if (
+        rectanglesOverlap(
+          rectangle,
+          windowZone
+        )
+      ) {
+        issues.push({
+          furnitureId: item.id,
+
+          type:
+            "window_collision",
+
+          message:
+            `${item.type} is blocking a window.`,
+        });
+      }
+    }
+  }
+
+  /*
+   * Clearance warnings.
+   */
+  for (
+    let i = 0;
+    i < rectangles.length;
+    i++
+  ) {
+    for (
+      let j = i + 1;
+      j < rectangles.length;
+      j++
+    ) {
+      const distance =
+        rectangleDistance(
+          rectangles[i].rectangle,
+          rectangles[j].rectangle
+        );
+
+      if (
+        distance < 1
+      ) {
+        issues.push({
+          furnitureId:
+            rectangles[i].item.id,
+
+          type:
+            "clearance",
+
+          message:
+            `There may not be enough walking space between ${rectangles[i].item.type} and ${rectangles[j].item.type}.`,
+        });
+      }
+    }
+  }
+
+  /*
+   * Score.
    */
   let score = 100;
 
-  for (const issue of issues) {
+  for (
+    const issue of issues
+  ) {
     switch (issue.type) {
       case "boundary":
-        score -= 30;
+        score -= 40;
         break;
 
       case "furniture_collision":
-        score -= 25;
+        score -= 35;
         break;
 
       case "door_collision":
-        score -= 30;
+        score -= 40;
         break;
 
       case "window_collision":
-        score -= 20;
+        score -= 30;
         break;
 
       case "clearance":
-        score -= 5;
+        score -= 8;
         break;
     }
   }
 
   score = Math.max(
     0,
-    Math.min(100, score)
+    Math.min(
+      100,
+      Math.round(score)
+    )
   );
 
   return {
     score,
     issues,
+
     valid:
       !issues.some(
         (issue) =>
@@ -417,403 +1765,4 @@ export function calculateLayout(
             "window_collision"
       ),
   };
-}
-
-/*
- * Automatic layout generator
- */
-export function generateLayout(
-  furniture: FurnitureGeometry[],
-  doors: Opening[],
-  windows: Opening[],
-  roomWidth: number,
-  roomLength: number
-): FurnitureGeometry[] {
-  const placed: FurnitureGeometry[] = [];
-
-  /*
-   * Larger furniture gets priority.
-   */
-  const sorted = [...furniture].sort(
-    (a, b) => {
-      const areaA =
-        Number(a.width) *
-        Number(a.length);
-
-      const areaB =
-        Number(b.width) *
-        Number(b.length);
-
-      return areaB - areaA;
-    }
-  );
-
-  /*
-   * Generate one item at a time.
-   */
-  for (const item of sorted) {
-    let bestCandidate:
-      | FurnitureGeometry
-      | null = null;
-
-    let bestScore = -Infinity;
-
-    const rotations = [0, 90];
-
-    for (const rotation of rotations) {
-      const baseWidth =
-        Number(item.width);
-
-      const baseLength =
-        Number(item.length);
-
-      const width =
-        rotation % 180 === 0
-          ? baseWidth
-          : baseLength;
-
-      const height =
-        rotation % 180 === 0
-          ? baseLength
-          : baseWidth;
-
-      /*
-       * Furniture physically cannot fit.
-       */
-      if (
-        width >
-          roomWidth ||
-        height >
-          roomLength
-      ) {
-        continue;
-      }
-
-      /*
-       * Search positions.
-       *
-       * 0.5-unit grid keeps the search
-       * reasonably fast.
-       */
-      for (
-        let y = 0;
-        y <=
-          roomLength -
-            height;
-        y += 0.5
-      ) {
-        for (
-          let x = 0;
-          x <=
-            roomWidth -
-              width;
-          x += 0.5
-        ) {
-          const candidate: FurnitureGeometry =
-            {
-              ...item,
-
-              x: Number(
-                x.toFixed(2)
-              ),
-
-              y: Number(
-                y.toFixed(2)
-              ),
-
-              rotation,
-            };
-
-          const rectangle =
-            getFurnitureRectangle(
-              candidate
-            );
-
-          /*
-           * HARD RULE 1:
-           * Must be completely inside room.
-           */
-          if (
-            !isInsideRoom(
-              rectangle,
-              roomWidth,
-              roomLength
-            )
-          ) {
-            continue;
-          }
-
-          /*
-           * HARD RULE 2:
-           * Cannot overlap already placed
-           * furniture.
-           */
-          let collision = false;
-
-          for (
-            const existing of placed
-          ) {
-            const existingRectangle =
-              getFurnitureRectangle(
-                existing
-              );
-
-            if (
-              rectanglesOverlap(
-                rectangle,
-                existingRectangle,
-                0.05
-              )
-            ) {
-              collision = true;
-              break;
-            }
-          }
-
-          if (collision) {
-            continue;
-          }
-
-          /*
-           * HARD RULE 3:
-           * Doors need clearance.
-           *
-           * We use 1 ft around doors.
-           */
-          let blocksDoor = false;
-
-          for (
-            const door of doors
-          ) {
-            const doorZone =
-              openingToRectangle(
-                door,
-                roomWidth,
-                roomLength,
-                1
-              );
-
-            if (
-              rectanglesOverlap(
-                rectangle,
-                doorZone
-              )
-            ) {
-              blocksDoor = true;
-              break;
-            }
-          }
-
-          if (blocksDoor) {
-            continue;
-          }
-
-          /*
-           * HARD RULE 4:
-           * Windows need clearance.
-           *
-           * We use 0.5 ft in front
-           * of the window.
-           */
-          let blocksWindow = false;
-
-          for (
-            const window of windows
-          ) {
-            const windowZone =
-              openingToRectangle(
-                window,
-                roomWidth,
-                roomLength,
-                0.5
-              );
-
-            if (
-              rectanglesOverlap(
-                rectangle,
-                windowZone
-              )
-            ) {
-              blocksWindow = true;
-              break;
-            }
-          }
-
-          if (blocksWindow) {
-            continue;
-          }
-
-          /*
-           * Candidate is physically valid.
-           *
-           * Now score its quality.
-           */
-          let candidateScore = 0;
-
-          /*
-           * Prefer furniture against walls.
-           */
-          const wallDistance =
-            Math.min(
-              x,
-              y,
-              roomWidth -
-                (x + width),
-              roomLength -
-                (y + height)
-            );
-
-          candidateScore +=
-            Math.max(
-              0,
-              20 -
-                wallDistance * 3
-            );
-
-          /*
-           * Penalize positions too close
-           * to existing furniture.
-           */
-          for (
-            const existing of placed
-          ) {
-            const existingRectangle =
-              getFurnitureRectangle(
-                existing
-              );
-
-            const clearanceZone = {
-              x:
-                existingRectangle.x -
-                1.5,
-
-              y:
-                existingRectangle.y -
-                1.5,
-
-              width:
-                existingRectangle.width +
-                3,
-
-              height:
-                existingRectangle.height +
-                3,
-            };
-
-            if (
-              rectanglesOverlap(
-                rectangle,
-                clearanceZone
-              )
-            ) {
-              candidateScore -=
-                15;
-            }
-          }
-
-          /*
-           * Prefer positions that leave
-           * the center of the room open.
-           */
-          const centerX =
-            roomWidth / 2;
-
-          const centerY =
-            roomLength / 2;
-
-          const furnitureCenterX =
-            x + width / 2;
-
-          const furnitureCenterY =
-            y + height / 2;
-
-          const distanceFromCenter =
-            Math.sqrt(
-              Math.pow(
-                furnitureCenterX -
-                  centerX,
-                2
-              ) +
-                Math.pow(
-                  furnitureCenterY -
-                    centerY,
-                  2
-                )
-            );
-
-          candidateScore +=
-            distanceFromCenter;
-
-          /*
-           * Prefer horizontal/vertical
-           * alignment with walls.
-           */
-          if (
-            x < 0.5 ||
-            roomWidth -
-              (x + width) <
-              0.5
-          ) {
-            candidateScore += 5;
-          }
-
-          if (
-            y < 0.5 ||
-            roomLength -
-              (y + height) <
-              0.5
-          ) {
-            candidateScore += 5;
-          }
-
-          if (
-            candidateScore >
-            bestScore
-          ) {
-            bestScore =
-              candidateScore;
-
-            bestCandidate =
-              candidate;
-          }
-        }
-      }
-    }
-
-    /*
-     * IMPORTANT:
-     *
-     * Never intentionally add an invalid
-     * furniture position.
-     */
-    if (bestCandidate) {
-      placed.push(
-        bestCandidate
-      );
-    }
-  }
-
-  /*
-   * Return the original furniture order.
-   *
-   * If an item genuinely couldn't fit,
-   * we return it unchanged. The editor
-   * will then show that item as invalid,
-   * rather than pretending the generated
-   * layout is valid.
-   */
-  return furniture.map(
-    (original) => {
-      const generated =
-        placed.find(
-          (item) =>
-            item.id ===
-            original.id
-        );
-
-      return (
-        generated ?? original
-      );
-    }
-  );
 }

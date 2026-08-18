@@ -4,6 +4,10 @@ import { FormEvent, useEffect, useState } from "react";
 import {
   checkBackendHealth,
   createRoom,
+  deleteLayout,
+  getSavedLayouts,
+  saveLayout,
+  SavedLayout,
 } from "../lib/api";
 import RoomEditor, {
   FurnitureItem,
@@ -97,6 +101,18 @@ export default function Home() {
 
   const [roomId, setRoomId] =
     useState<string | null>(null);
+
+  const [savedLayouts, setSavedLayouts] =
+    useState<SavedLayout[]>([]);
+
+  const [layoutName, setLayoutName] =
+    useState("");
+
+  const [isSavingLayout, setIsSavingLayout] =
+    useState(false);
+
+  const [isLoadingLayouts, setIsLoadingLayouts] =
+    useState(false);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -494,6 +510,109 @@ export default function Home() {
     }
 
     setStep(4);
+  }
+
+  async function loadSavedLayouts() {
+    if (!roomId) {
+      return;
+    }
+
+    try {
+      setIsLoadingLayouts(true);
+      setError("");
+
+      const layouts =
+        await getSavedLayouts(roomId);
+
+      setSavedLayouts(layouts);
+    } catch {
+      setError(
+        "Could not load saved layouts."
+      );
+    } finally {
+      setIsLoadingLayouts(false);
+    }
+  }
+
+  async function handleSaveLayout() {
+    if (!roomId) {
+      setError(
+        "Create a room before saving a layout."
+      );
+      return;
+    }
+
+    const name =
+      layoutName.trim() ||
+      `Layout ${savedLayouts.length + 1}`;
+
+    try {
+      setIsSavingLayout(true);
+      setError("");
+      setSuccess("");
+
+      const saved =
+        await saveLayout(
+          roomId,
+          name,
+          furniture
+        );
+
+      setSavedLayouts((current) => [
+        saved,
+        ...current,
+      ]);
+
+      setLayoutName("");
+      setSuccess(
+        `"${name}" saved successfully.`
+      );
+    } catch {
+      setError(
+        "Could not save the layout."
+      );
+    } finally {
+      setIsSavingLayout(false);
+    }
+  }
+
+  function handleLoadLayout(
+    layout: SavedLayout
+  ) {
+    setFurniture(
+      layout.furniture as FurnitureItem[]
+    );
+
+    setError("");
+    setSuccess(
+      `"${layout.name}" loaded.`
+    );
+  }
+
+  async function handleDeleteLayout(
+    layoutId: string
+  ) {
+    try {
+      setError("");
+      setSuccess("");
+
+      await deleteLayout(layoutId);
+
+      setSavedLayouts((current) =>
+        current.filter(
+          (layout) =>
+            layout.id !== layoutId
+        )
+      );
+
+      setSuccess(
+        "Layout deleted successfully."
+      );
+    } catch {
+      setError(
+        "Could not delete the layout."
+      );
+    }
   }
 
   function goBack(stepNumber: 1 | 2 | 3) {
@@ -1142,6 +1261,136 @@ export default function Home() {
                 setFurniture
               }
             />
+
+            <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold">
+                    Save your layout
+                  </h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Save the current furniture arrangement to MongoDB Atlas.
+                  </p>
+                </div>
+
+                <div className="flex w-full gap-2 sm:w-auto">
+                  <input
+                    value={layoutName}
+                    onChange={(e) =>
+                      setLayoutName(
+                        e.target.value
+                      )
+                    }
+                    placeholder="Layout name"
+                    maxLength={100}
+                    className="min-w-0 flex-1 rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black sm:w-56"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={handleSaveLayout}
+                    disabled={isSavingLayout}
+                    className="rounded-xl bg-black px-5 py-3 font-semibold text-white disabled:opacity-50"
+                  >
+                    {isSavingLayout
+                      ? "Saving..."
+                      : "Save"}
+                  </button>
+                </div>
+              </div>
+
+              {success && (
+                <div className="mt-4 rounded-xl bg-green-50 px-4 py-3 text-sm text-green-700">
+                  {success}
+                </div>
+              )}
+
+              {error && (
+                <div className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {error}
+                </div>
+              )}
+
+              <div className="mt-8 flex items-center justify-between border-t pt-6">
+                <div>
+                  <h3 className="font-semibold">
+                    Saved layouts
+                  </h3>
+                  <p className="text-sm text-gray-500">
+                    Load an earlier arrangement whenever you want.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={loadSavedLayouts}
+                  disabled={
+                    isLoadingLayouts ||
+                    !roomId
+                  }
+                  className="rounded-lg border px-3 py-2 text-sm disabled:opacity-50"
+                >
+                  {isLoadingLayouts
+                    ? "Loading..."
+                    : "Refresh"}
+                </button>
+              </div>
+
+              {savedLayouts.length === 0 ? (
+                <div className="mt-4 rounded-xl border border-dashed border-gray-300 px-4 py-8 text-center text-sm text-gray-500">
+                  No saved layouts yet.
+                </div>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  {savedLayouts.map(
+                    (layout) => (
+                      <div
+                        key={layout.id}
+                        className="flex flex-col gap-3 rounded-xl border border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div>
+                          <p className="font-medium">
+                            {layout.name}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {layout.furniture.length} furniture item
+                            {layout.furniture.length === 1
+                              ? ""
+                              : "s"}
+                          </p>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleLoadLayout(
+                                layout
+                              )
+                            }
+                            className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium hover:bg-gray-200"
+                          >
+                            Load
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDeleteLayout(
+                                layout.id
+                              )
+                            }
+                            className="rounded-lg border border-red-200 px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  )}
+                </div>
+              )}
+            </section>
 
             <div className="mt-6 flex justify-between">
               <button
