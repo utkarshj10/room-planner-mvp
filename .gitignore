@@ -1,0 +1,62 @@
+# ============================================================
+# Environment / secrets / credentials
+# ============================================================
+
+.env
+.env.*
+*.env
+*.env.*
+
+# Even example/template environment files are ignored
+# to avoid triggering secret scanners.
+*.env.example
+
+# Credential/config files
+credentials.*
+*credentials*
+*secret*
+*secrets*
+*private-key*
+*private_key*
+*connection-string*
+*connection_string*
+*connectionstring*
+
+# ============================================================
+# Frontend - Node / Next.js
+# ============================================================
+
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# ============================================================
+# Backend - Python
+# ============================================================
+
+backend/venv/
+backend/__pycache__/
+backend/**/*.pyc
+*.pyc
+.pytest_cache/
+.mypy_cache/
+
+# ============================================================
+# IDE / editors
+# ============================================================
+
+.vscode/
+.idea/
+
+# ============================================================
+# OS
+# ============================================================
+
+.DS_Store
+Thumbs.db
+
+# ============================================================
+# Logs
+# ============================================================
+
+*.log
