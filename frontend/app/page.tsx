@@ -119,11 +119,73 @@ export default function Home() {
   const [isSubmitting, setIsSubmitting] =
     useState(false);
 
+  const [roomSessions, setRoomSessions] = useState<Record<string, any>>({});
+  const [showRoomList, setShowRoomList] = useState(false);
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
+
   useEffect(() => {
     checkBackendHealth()
       .then(() => setBackendConnected(true))
       .catch(() => setBackendConnected(false));
   }, []);
+
+  useEffect(() => {
+    const savedSessions = localStorage.getItem("roomPlannerSessions");
+    const legacySession = localStorage.getItem("roomPlannerSession");
+
+    if (!savedSessions && legacySession) {
+      try {
+        const oldSession = JSON.parse(legacySession);
+        if (oldSession?.roomId) {
+          const migrated = { [oldSession.roomId]: oldSession };
+          localStorage.setItem("roomPlannerSessions", JSON.stringify(migrated));
+          localStorage.setItem("roomPlannerLastRoomId", oldSession.roomId);
+        }
+      } catch {
+        localStorage.removeItem("roomPlannerSession");
+      }
+    }
+
+    const raw = localStorage.getItem("roomPlannerSessions");
+    if (!raw) {
+      setIsRestoringSession(false);
+      return;
+    }
+
+    try {
+      const sessions = JSON.parse(raw);
+      if (!sessions || typeof sessions !== "object") throw new Error("Invalid sessions");
+      setRoomSessions(sessions);
+      const lastId = localStorage.getItem("roomPlannerLastRoomId");
+      const session = lastId && sessions[lastId] ? sessions[lastId] : Object.values(sessions)[0];
+      if (session?.roomId) {
+        setRoomId(session.roomId);
+        setRoom(session.room);
+        setDoors(session.doors || []);
+        setWindows(session.windows || []);
+        setFurniture(session.furniture || []);
+        setStep(4);
+        getSavedLayouts(session.roomId).then(setSavedLayouts).catch(() => setSavedLayouts([]));
+      }
+    } catch {
+      localStorage.removeItem("roomPlannerSessions");
+      localStorage.removeItem("roomPlannerLastRoomId");
+    } finally {
+      setIsRestoringSession(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isRestoringSession || !roomId) return;
+    const session = { roomId, room, doors, windows, furniture };
+    const raw = localStorage.getItem("roomPlannerSessions");
+    let sessions: Record<string, any> = {};
+    try { sessions = raw ? JSON.parse(raw) : {}; } catch { sessions = {}; }
+    const updated = { ...sessions, [roomId]: session };
+    setRoomSessions(updated);
+    localStorage.setItem("roomPlannerSessions", JSON.stringify(updated));
+    localStorage.setItem("roomPlannerLastRoomId", roomId);
+  }, [isRestoringSession, roomId, room, doors, windows, furniture]);
 
   function updateRoomField(
     field: keyof RoomForm,
@@ -314,6 +376,42 @@ export default function Home() {
         (item) => item.id !== id
       )
     );
+  }
+
+  function openRoom(session: any) {
+    setRoomId(session.roomId);
+    setRoom(session.room);
+    setDoors(session.doors || []);
+    setWindows(session.windows || []);
+    setFurniture(session.furniture || []);
+    setSavedLayouts([]);
+    setLayoutName("");
+    setError("");
+    setSuccess("");
+    setShowRoomList(false);
+    setStep(4);
+    localStorage.setItem("roomPlannerLastRoomId", session.roomId);
+    getSavedLayouts(session.roomId).then(setSavedLayouts).catch(() => setSavedLayouts([]));
+  }
+
+  function showMyRooms() {
+    setShowRoomList(true);
+    setError("");
+    setSuccess("");
+  }
+
+  function startNewRoom() {
+    setRoomId(null);
+    setRoom({ name: "", width: "", length: "", unit: "ft" });
+    setDoors([{ id: 1, wall: "south", position: "", width: "" }]);
+    setWindows([{ id: 1, wall: "east", position: "", width: "" }]);
+    setFurniture([{ id: 1, type: "Queen Bed", width: "5", length: "6.67", quantity: "1", x: 1, y: 1, rotation: 0 }]);
+    setSavedLayouts([]);
+    setLayoutName("");
+    setError("");
+    setSuccess("");
+    setShowRoomList(false);
+    setStep(1);
   }
 
   async function handleRoomSubmit(
@@ -619,6 +717,46 @@ export default function Home() {
     setStep(stepNumber);
     setError("");
     setSuccess("");
+  }
+
+  if (isRestoringSession) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#f7f7f5] px-6">
+        <div className="text-center">
+          <div className="mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-black text-sm font-bold text-white">R</div>
+          <p className="text-sm text-gray-600">Restoring your room...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (showRoomList) {
+    const rooms = Object.values(roomSessions) as any[];
+    return (
+      <main className="min-h-screen bg-[#f7f7f5] px-6 py-10">
+        <div className="mx-auto max-w-4xl">
+          <div className="mb-8">
+            <div className="mb-3 flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-lg bg-black text-sm font-bold text-white">R</div><span className="text-lg font-semibold">Room Planner</span></div>
+            <h1 className="text-4xl font-bold tracking-tight text-gray-950">My Rooms</h1>
+            <p className="mt-2 text-gray-600">Switch rooms or create a new one.</p>
+          </div>
+          <div className="space-y-4">
+            {rooms.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-gray-300 bg-white px-6 py-12 text-center text-gray-500">No rooms yet.</div>
+            ) : rooms.map((session) => (
+              <div key={session.roomId} className="flex flex-col gap-4 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                <div><h2 className="font-semibold text-gray-950">{session.room.name}</h2><p className="mt-1 text-sm text-gray-500">{session.room.width} × {session.room.length} {session.room.unit}</p></div>
+                <button type="button" onClick={() => openRoom(session)} className="rounded-xl bg-black px-5 py-3 text-sm font-semibold text-white">Open room</button>
+              </div>
+            ))}
+          </div>
+          <div className="mt-6 flex gap-3">
+            <button type="button" onClick={startNewRoom} className="rounded-xl bg-black px-5 py-3 font-semibold text-white">+ Create new room</button>
+            {roomId && <button type="button" onClick={() => setShowRoomList(false)} className="rounded-xl border border-gray-300 bg-white px-5 py-3 font-medium">Back to editor</button>}
+          </div>
+        </div>
+      </main>
+    );
   }
 
   const progressWidth =
@@ -1246,6 +1384,10 @@ export default function Home() {
         {/* STEP 4 */}
         {step === 4 && (
           <section>
+            <div className="mb-4 flex justify-end gap-3">
+              <button type="button" onClick={showMyRooms} className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-medium">My Rooms</button>
+              <button type="button" onClick={startNewRoom} className="rounded-xl bg-black px-4 py-2 text-sm font-semibold text-white">+ New Room</button>
+            </div>
             <RoomEditor
               roomWidth={Number(
                 room.width
